@@ -660,7 +660,6 @@ Matrix compute_2body_fock(const libint2::BasisSet& obs,
               }
             }
           }
-
         }
       }
     }
