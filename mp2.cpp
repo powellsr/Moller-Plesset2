@@ -33,6 +33,9 @@
 // Libint Gaussian integrals library
 #include <libint2.hpp>
 
+// BTAS include
+#include <btas/btas.h>
+
 typedef Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
         Matrix;  // import dense, dynamically sized Matrix type from Eigen;
                  // this is a matrix with row-major storage (http://en.wikipedia.org/wiki/Row-major_order)
@@ -54,9 +57,12 @@ Matrix compute_2body_fock_simple(const libint2::BasisSet& obs,
 Matrix compute_2body_fock(const libint2::BasisSet& obs,
                                  const Matrix& D);
 
-double mp2_energy(Matrix& coeff_mat, std::vector<double> ao_ints, int no_occ, int nao, Eigen::VectorXd evals);
-double mo_2e_int(Matrix& coeff_mat, Matrix& two_e_ints, int i, int j, int a, int b, int no_occ);
+double mp2_energy(Matrix& coeff_mat, std::vector<double>& ao_ints, int no_occ, int nao, Eigen::VectorXd& evals);
+double mp2_energy(Matrix& coeff_mat, btas::Tensor<double>& ao_ints, int no_occ, int nao, Eigen::VectorXd& evals);
+double mo_2e_int(Matrix& coeff_mat, Matrix& two_e_ints, int i, int j, int a, int b/*, int no_occ*/);
+double mo_2e_int(Matrix& coeff_mat, btas::Tensor<double> ao_ints, int i, int j, int a, int b);
 std::vector<double> ao_integrals_vector(libint2::BasisSet& obs);
+btas::Tensor<double> ao_integrals_tensor(libint2::BasisSet& obs);
 
 int main(int argc, char *argv[]) {
 
@@ -233,10 +239,40 @@ int main(int argc, char *argv[]) {
 
     // ####### Begin MP2 stuff
     std::vector<double> ao_ints = ao_integrals_vector(obs);
+    //std::cout << ao_ints << "\n";
+    std::cout << "Length of ao_ints vector: " << ao_ints.size() << "\n";
+    double total_vector_sum = 0.0;
+    double total_tensor_sum = 0.0;
+    for (int i = 0; i< ao_ints.size(); ++i) {
+        if (i % 7 == 0)
+            std::cout << "\n";
+        total_vector_sum += ao_ints[i];
+        printf("%10.6f\t", ao_ints[i]);
+    }
+    std::cout << std::endl;
+    btas::Tensor<double> ao_ints_ten = ao_integrals_tensor(obs);
+    std::cout << "Integrals tensor: " << "\n";
+    for (int i = 0; i < 7; ++i) {
+        for (int j = 0; j < 7; ++j) {
+            for (int k = 0; k < 7; ++k) {
+                for (int l = 0; l < 7; ++l) {
+                    printf("%10.6f\t", ao_ints_ten(i,j,k,l));
+                    total_tensor_sum += ao_ints_ten(i,j,k,l);
+                }
+                std::cout << "\n";
+            }
+            //std::cout << "***\n";
+        }
+        //std::cout << "$$$\n";
+    }
+    //std::cout << "\t***** AO Ints Tensor: " << ao_ints_ten << std::endl;
     auto mp2_e = mp2_energy(C, ao_ints, ndocc, nao, C_v);
+    auto mp2_e_ten = mp2_energy(C, ao_ints_ten, ndocc, nao, C_v);
 
+    printf("** Vector sum total %20.12f, Tensor sum total %20.12f\n", total_vector_sum, total_tensor_sum);
     printf("** Hartree-Fock energy = %20.12f\n", ehf + enuc);
     printf("** MP2 energy = %20.12f\n", mp2_e);
+    printf("** MP2 energy using tensor = %20.12f\n", mp2_e_ten);
     printf("** Total MP2 energy = %20.12f\n", ehf + enuc + mp2_e);
 
     libint2::finalize(); // done with libint
@@ -691,9 +727,48 @@ double mo_2e_int(Matrix& coeff_mat, std::vector<double> ao_ints, int i, int j, i
     }
     return result;
 }
+// Computes a molecular-orbital based four-center integral using a 4d tensor of 2-d ints
+double mo_2e_int(Matrix& coeff_mat, btas::Tensor<double> ao_ints, int i, int j, int a, int b) {
+    using std::pow;
+
+    //int nbasis_fn = sqrt(sqrt(ao_ints.size()));
+    size_t nbasis_fn = ao_ints.extent(0);
+
+    double result = 0.0;
+    auto ao_integral = 0.0;
+
+    for (int mu = 0; mu < nbasis_fn; ++mu) {
+        for (int nu = 0; nu < nbasis_fn; ++nu) {
+            for (int rho = 0; rho < nbasis_fn; ++rho) {
+                for (int sigma = 0; sigma < nbasis_fn; ++sigma) {
+                    //ao_integral = ao_ints[ mu * pow(nbasis_fn,3) + nu * pow(nbasis_fn,2) + rho * nbasis_fn + sigma];
+                    ao_integral = ao_ints(rho, sigma, mu, nu);
+                    result += coeff_mat(mu,a) * coeff_mat(nu, b) * ao_integral * coeff_mat(i, rho) * coeff_mat(j, sigma);
+                }
+            }
+        }
+    }
+    return result;
+}
 
 // Computes MP2 energy
-double mp2_energy(Matrix& coeff_mat, std::vector<double> ao_ints, int no_occ, int nao, Eigen::VectorXd evals) {
+double mp2_energy(Matrix& coeff_mat, std::vector<double>& ao_ints, int no_occ, int nao, Eigen::VectorXd& evals) {
+    double mp2e = 0.0;
+
+    for (int i = 0; i < no_occ; ++i) {
+        for (int j = 0; j < no_occ; ++j) {
+            for (int a = no_occ; a < nao; ++a) {
+                for (int b = no_occ; b < nao; ++b) {
+                    double int_ijab = mo_2e_int(coeff_mat, ao_ints, i, a, j, b);
+                    double int_ijba = mo_2e_int(coeff_mat, ao_ints, i, b, j, a);
+                    mp2e += (int_ijab * (2 * int_ijab - int_ijba)) / (evals(i) + evals(j) - evals(a) - evals(b));
+                }
+            }
+        }
+    }
+    return mp2e;
+}
+double mp2_energy(Matrix& coeff_mat, btas::Tensor<double>& ao_ints, int no_occ, int nao, Eigen::VectorXd& evals) {
     double mp2e = 0.0;
 
     for (int i = 0; i < no_occ; ++i) {
@@ -717,7 +792,7 @@ std::vector<double> ao_integrals_vector(libint2::BasisSet& obs)
     using libint2::Engine;
     using libint2::Operator;
 
-    std::vector<double> ao_ints;
+    std::vector<double> eri_ao;
 
     libint2::initialize();
 
@@ -771,7 +846,85 @@ std::vector<double> ao_integrals_vector(libint2::BasisSet& obs)
                                 const auto bf3 = f3 + bf3_first;
                                 for(auto f4=0; f4!=n4; ++f4, ++f1234) {
                                     const auto bf4 = f4 + bf4_first;
-                                    ao_ints.push_back( buf_1234[f1234] );
+                                    eri_ao.push_back( buf_1234[f1234] );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return eri_ao;
+}
+
+//typedef btas::RangeNd<CblasRowMajor, std::array<long, 4>> Range4d;
+//typedef btas::Tensor<double, Range4d> Tensor4d;
+
+btas::Tensor<double> ao_integrals_tensor(libint2::BasisSet& obs)
+{
+    using libint2::Shell;
+    using libint2::Engine;
+    using libint2::Operator;
+
+    size_t n = nbasis(obs);
+    btas::Tensor<double> ao_ints(n, n, n, n);
+
+    libint2::initialize();
+
+    // construct the electron repulsion integrals engine
+    Engine engine(Operator::coulomb, max_nprim(obs), max_nprim(obs), 0);
+
+    auto shell2bf = obs.shell2bf();
+
+    // buf[0] points to the target shell set after every call  to engine.compute()
+    const auto& buf = engine.results();
+
+    // loop over shell pairs of the Fock matrix, {s1,s2}
+    // Fock matrix is symmetric, but skipping it here for simplicity (see compute_2body_fock)
+    for(auto s1=0; s1!=obs.size(); ++s1) {
+
+        auto bf1_first = shell2bf[s1]; // first basis function in this shell
+        auto n1 = obs[s1].size();
+
+        for(auto s2=0; s2!=obs.size(); ++s2) {
+
+            auto bf2_first = shell2bf[s2];
+            auto n2 = obs[s2].size();
+
+            // loop over shell pairs of the density matrix, {s3,s4}
+            // again symmetry is not used for simplicity
+            for(auto s3=0; s3!=obs.size(); ++s3) {
+
+                auto bf3_first = shell2bf[s3];
+                auto n3 = obs[s3].size();
+
+                for(auto s4=0; s4!= obs.size(); ++s4) {
+
+                    auto bf4_first = shell2bf[s4];
+                    auto n4 = obs[s4].size();
+
+                    // Coulomb contribution to the Fock matrix is from {s1,s2,s3,s4} integrals
+                    engine.compute(obs[s1], obs[s2], obs[s3], obs[s4]);
+                    const auto* buf_1234 = buf[0];
+                    if (buf_1234 == nullptr)
+                        continue; // if all integrals screened out, skip to next quartet
+
+                    // we don't have an analog of Eigen for tensors (yet ... see github.com/BTAS/BTAS, under development)
+                    // hence some manual labor here:
+                    // 1) loop over every integral in the shell set (= nested loops over basis functions in each shell)
+                    // and 2) add contribution from each integral
+                    for(auto f1=0, f1234=0; f1!=n1; ++f1) {
+                        const auto bf1 = f1 + bf1_first;
+                        for(auto f2=0; f2!=n2; ++f2) {
+                            const auto bf2 = f2 + bf2_first;
+                            for(auto f3=0; f3!=n3; ++f3) {
+                                const auto bf3 = f3 + bf3_first;
+                                for(auto f4=0; f4!=n4; ++f4, ++f1234) {
+                                    const auto bf4 = f4 + bf4_first;
+                                    //ao_ints.push_back( buf_1234[f1234] );
+                                    ao_ints(s1, s2, s3, s4) = buf_1234[f1234];
                                 }
                             }
                         }
