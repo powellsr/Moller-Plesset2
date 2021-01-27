@@ -709,7 +709,8 @@ btas::Tensor<double>
         }
     }
 
-    btas::Tensor<double> iq_rs;
+    btas::Tensor<double> iq_rs;  // (iq|rs)
+    // iq_rs(i,q,r,s) = 1.0 * \sum_p pq_rs(p,q,r,s) * C_occ(p,i) + 0.0 * iq_rs(i,q,r,s)
     btas::contract(1.0, pq_rs, {1, 2, 3, 4}, C_occ, {1, 5}, 0.0, iq_rs, {5, 2, 3, 4});
     btas::Tensor<double> iq_js;
     btas::contract(1.0, iq_rs, {1, 2, 3, 4}, C_occ, {3, 5}, 0.0, iq_js, {1, 2, 5, 4});
