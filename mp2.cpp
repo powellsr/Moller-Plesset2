@@ -81,7 +81,7 @@ int main(int argc, char *argv[]) {
     // read geometry from a file; by default read from h2o.xyz, else take filename (.xyz) from the command line
     const auto filename = (argc > 1) ? argv[1] : "h2o.xyz";
     std::vector<libint2::Atom> atoms = read_geometry(filename);
-	const auto basisname = (argc > 2) ? argv[2] : "STO-3g"; //aug-cc-pVDZ
+	const auto basisname = (argc > 2) ? argv[2] : "sto-3g"; //aug-cc-pVDZ
 
     // count the number of electrons
     auto nelectron = 0;
@@ -149,10 +149,8 @@ int main(int argc, char *argv[]) {
     /*** build initial-guess density ***/
     /*** =========================== ***/
 
-    const auto use_hcore_guess = false;  // use core Hamiltonian eigenstates to guess density?
-                                         // set to true to match the result of versions 0, 1, and 2 of the code
-                                         // HOWEVER !!! even for medium-size molecules hcore will usually fail !!!
-                                         // thus set to false to use Superposition-Of-Atomic-Densities (SOAD) guess
+    const auto use_hcore_guess = basisname == "sto-3g" ? false : true;
+
     Matrix D;
     Matrix C;
     Eigen::VectorXd eps;
