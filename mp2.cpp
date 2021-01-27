@@ -57,11 +57,8 @@ Matrix compute_2body_fock_simple(const libint2::BasisSet& obs,
 Matrix compute_2body_fock(const libint2::BasisSet& obs,
                                  const Matrix& D);
 
-double mp2_energy(Matrix& coeff_mat, std::vector<double>& ao_ints, int no_occ, int nao, Eigen::VectorXd& evals);
-double mp2_energy(Matrix& coeff_mat, btas::Tensor<double>& ao_ints, int no_occ, int nao, Eigen::VectorXd& evals);
-double mo_2e_int(Matrix& coeff_mat, Matrix& two_e_ints, int i, int j, int a, int b/*, int no_occ*/);
-double mo_2e_int(Matrix& coeff_mat, btas::Tensor<double> ao_ints, int i, int j, int a, int b, int nocc);
-//std::vector<double> ao_integrals_vector(libint2::BasisSet& obs);
+double mp2_energy(const Matrix&C, const btas::Tensor<double>& ao_ints, int nocc, int n, const Eigen::VectorXd& evals);
+btas::Tensor<double> transform_pqrs_to_iajb(const Matrix& C, const btas::Tensor<double>& pq_rs, int nocc);
 btas::Tensor<double> rei_ao_integrals_tensor(libint2::BasisSet& obs);
 
 int main(int argc, char *argv[]) {
@@ -158,7 +155,7 @@ int main(int argc, char *argv[]) {
                                          // thus set to false to use Superposition-Of-Atomic-Densities (SOAD) guess
     Matrix D;
     Matrix C;
-    Eigen::VectorXd C_v;
+    Eigen::VectorXd eps;
     if (use_hcore_guess) { // hcore guess
       // solve H C = e S C
       Eigen::GeneralizedSelfAdjointEigenSolver<Matrix> gen_eig_solver(H, S);
@@ -208,9 +205,8 @@ int main(int argc, char *argv[]) {
 
       // solve F C = e S C
       Eigen::GeneralizedSelfAdjointEigenSolver<Matrix> gen_eig_solver(F, S);
-      auto eps = gen_eig_solver.eigenvalues();
       C = gen_eig_solver.eigenvectors();
-      C_v = gen_eig_solver.eigenvalues();
+      eps = gen_eig_solver.eigenvalues();
 
       // compute density, D = C(occ) . C(occ)T
       auto C_occ = C.leftCols(ndocc);
@@ -253,23 +249,7 @@ int main(int argc, char *argv[]) {
     std::cout << std::endl;
     */
     btas::Tensor<double> ao_ints_ten = rei_ao_integrals_tensor(obs);
-    //std::cout << "Integrals tensor: " << "\n";
-    for (int i = 0; i < 7; ++i) {
-        for (int j = 0; j < 7; ++j) {
-            for (int k = 0; k < 7; ++k) {
-                for (int l = 0; l < 7; ++l) {
-                    //printf("%10.6f\t", ao_ints_ten(i,j,k,l));
-                    total_tensor_sum += ao_ints_ten(i,j,k,l);
-                }
-                //std::cout << "\n";
-            }
-            //std::cout << "***\n";
-        }
-        //std::cout << "$$$\n";
-    }
-    //std::cout << "\t***** AO Ints Tensor: " << ao_ints_ten << std::endl;
-    //auto mp2_e = mp2_energy(C, ao_ints, ndocc, nao, C_v);
-    auto mp2_e_ten = mp2_energy(C, ao_ints_ten, ndocc, nao, C_v);
+    auto mp2_e_ten = mp2_energy(C, ao_ints_ten, ndocc, nao, eps);
 
     printf("** Vector sum total %20.12f\n", total_tensor_sum);
     printf("** Hartree-Fock energy = %20.12f\n", ehf + enuc);
@@ -708,130 +688,59 @@ Matrix compute_2body_fock(const libint2::BasisSet& obs,
   return 0.5 * (G + Gt);
 }
 
-// Computes a molecular-orbital based four-center integral
-double mo_2e_int(Matrix& coeff_mat, std::vector<double> ao_ints, int i, int j, int a, int b) {
-    using std::pow;
+// transforms (pq|rs) -> (ia|jb)
+btas::Tensor<double>
+    transform_pqrs_to_iajb(const Matrix& C, const btas::Tensor<double>& pq_rs, int nocc) {
+    const int n = pq_rs.extent(0);
+    const int nuocc = n - nocc;
 
-    int nbasis_fn = sqrt(sqrt(ao_ints.size()));
+    printf("nocc= %2i,  n= %2i,  nuocc= %2i\n", nocc, n, nuocc);
 
-    double result = 0.0;
-    auto ao_integral = 0.0;
+    btas::Tensor<double> C_occ(n, nocc);
 
-    for (int mu = 0; mu < nbasis_fn; ++mu) {
-        for (int nu = 0; nu < nbasis_fn; ++nu) {
-            for (int rho = 0; rho < nbasis_fn; ++rho) {
-                for (int sigma = 0; sigma < nbasis_fn; ++sigma) {
-                    ao_integral = ao_ints[ mu * pow(nbasis_fn,3) + nu * pow(nbasis_fn,2) + rho * nbasis_fn + sigma];
-                    result += coeff_mat(mu,a) * coeff_mat(nu, b) * ao_integral * coeff_mat(i, rho) * coeff_mat(j, sigma);
-                }
-            }
+    for (int mu = 0; mu != n; ++mu) {
+        for (int i = 0; i < nocc; ++i) {
+            C_occ(mu, i) = C(mu, i);
         }
     }
-    return result;
-}
-// Computes a molecular-orbital based four-center integral using a 4d tensor of 2-e ints
-double mo_2e_int(Matrix& coeff_mat, btas::Tensor<double> ao_ints, int i, int j, int a, int b, int nocc) {
-    using std::pow;
 
-    //int nbasis_fn = sqrt(sqrt(ao_ints.size()));
-    int nbasis_fn = ao_ints.extent(0);
-    int nuocc = nbasis_fn - nocc;
-
-    printf("nocc= %2i,  nbasis_fn= %2i,  nuocc= %2i\n", nocc, nbasis_fn, nuocc);
-    std::cout << "Coeff matrix dimensions: " << coeff_mat.size() << "\n";
-
-    btas::Tensor<double> g_uv_ps(nbasis_fn, nbasis_fn, nbasis_fn, nbasis_fn); g_uv_ps.fill(0);
-
-    btas::Tensor<double> C_ao_occ(nbasis_fn, nocc);
-    std::cout << "C occ size: " << C_ao_occ.extent(0) << "," << C_ao_occ.extent(1) << "\n";
-    for (int i = 0; i < nocc; ++i) {
-        for (int j = 0; j < nbasis_fn; ++j) {
-            //std::cout <<
-            C_ao_occ(i, j) = coeff_mat(i, j);
+    btas::Tensor<double> C_uocc(n, nuocc);
+    for (int mu = 0; mu != n; ++mu) {
+       for (int a = nocc; a != n; ++a) {
+            C_uocc(mu, a-nocc) = C(mu, a);
         }
     }
-    //C_ao_occ = coeff_mat.leftCols(nocc);
-    btas::Tensor<double> C_ao_unocc(nbasis_fn, nuocc);
-    std::cout << "C unocc size: " << C_ao_unocc.extent(0) << "," << C_ao_unocc.extent(1) << "\n";
-    for (int i = nocc; i < nbasis_fn; ++i) {
-        for (int j = 0; j < nbasis_fn; ++j) {
-            C_ao_unocc(i, j) = coeff_mat(i, j);
-        }
-    }
-    printf("Size of ao_ints 4th order tensor: %4li\n", ao_ints.size());
-    printf("Dimensions of ao_ints: %4li, %4li, %4li, %4li\n", ao_ints.extent(0), ao_ints.extent(1), ao_ints.extent(2), ao_ints.extent(3));
-    printf("Dimensions of C_ao_occ: %4li, %4li\n", C_ao_occ.extent(0), C_ao_occ.extent(1));
-    std::cout << "Initialized overlap tensors successfully\n";
-    //C_ao_unocc = coeff_mat.rightCols(nuocc);
 
-    btas::Tensor<double> g_iv_ps; //(nbasis_fn, nbasis_fn, nbasis_fn)
-    std::cout << "Created tensor to accept contraction result\n";
-    btas::contract(1.0, g_uv_ps, {1, 2, 3, 4}, C_ao_occ, {1, 5}, 0.0, g_iv_ps, {5, 2, 3, 4});
-    //btas::contract(1.0, ao_ints, {1, 2, 3, 4}, C_ao_occ, {1, 5}, 0.0, g_iv_ps, {5, 2, 3, 4});
-    std::cout << "First contraction successful\n";
-    btas::Tensor<double> g_iv_js;
-    //btas::contract(1.0, g_iv_ps, {1, 2, 3, 4}, C_ao_occ, {3, 5}, 0.0, g_iv_js, {1, 2, 5, 4}); // last item should be {1,2,5,4}? was written {3,2,5,4}
-    btas::contract(1.0, ao_ints, {1, 2, 3, 4}, C_ao_occ, {3, 5}, 0.0, g_iv_js, {1, 2, 5, 4});
-    std::cout << "Second contraction successful\n";
+    btas::Tensor<double> iq_rs;
+    btas::contract(1.0, pq_rs, {1, 2, 3, 4}, C_occ, {1, 5}, 0.0, iq_rs, {5, 2, 3, 4});
+    btas::Tensor<double> iq_js;
+    btas::contract(1.0, iq_rs, {1, 2, 3, 4}, C_occ, {3, 5}, 0.0, iq_js, {1, 2, 5, 4});
+    btas::Tensor<double> iq_jb;
+    btas::contract(1.0, iq_js, {1, 2, 3, 4}, C_uocc, {4, 5}, 0.0, iq_jb, {1, 2, 3, 5});
+    btas::Tensor<double> ia_jb;
+    btas::contract(1.0, iq_jb, {1, 2, 3, 4}, C_uocc, {2, 5}, 0.0, ia_jb, {1, 5, 3, 4});
 
-    btas::Tensor<double> g_iv_jb;
-    //btas::contract(1.0, g_iv_js, {1, 2, 3, 4}, C_ao_unocc, {3, 5}, 0.0, g_iv_jb, {1, 2, 5, 4});
-    btas::contract(1.0, ao_ints, {1, 2, 3, 4}, C_ao_unocc, {3, 5}, 0.0, g_iv_jb, {1, 2, 5, 4});
-    std::cout << "Third contraction successful\n";
-    btas::Tensor<double> g_ia_jb;
-    //btas::contract(1.0, g_iv_jb, {1, 2, 3, 4}, C_ao_unocc, {1, 5}, 0.0, g_ia_jb, {5, 2, 3, 4});
-    btas::contract(1.0, ao_ints, {1, 2, 3, 4}, C_ao_unocc, {1, 5}, 0.0, g_ia_jb, {5, 2, 3, 4});
-    std::cout << "Fourth contraction successful\n";
-
-    double result = 0.0;
-    auto ao_integral = 0.0;
-
-    for (int mu = 0; mu < nbasis_fn; ++mu) {
-        for (int nu = 0; nu < nbasis_fn; ++nu) {
-            for (int rho = 0; rho < nbasis_fn; ++rho) {
-                for (int sigma = 0; sigma < nbasis_fn; ++sigma) {
-                    //ao_integral = ao_ints[ mu * pow(nbasis_fn,3) + nu * pow(nbasis_fn,2) + rho * nbasis_fn + sigma];
-                    ao_integral = ao_ints(rho, sigma, mu, nu);
-                    result += coeff_mat(mu,a) * coeff_mat(nu, b) * ao_integral * coeff_mat(i, rho) * coeff_mat(j, sigma);
-                }
-            }
-        }
-    }
-    return result;
+    return ia_jb;
 }
 
-// Computes MP2 energy
-double mp2_energy(Matrix& coeff_mat, std::vector<double>& ao_ints, int no_occ, int nao, Eigen::VectorXd& evals) {
-    double mp2e = 0.0;
+double mp2_energy(const Matrix& C, const btas::Tensor<double>& pq_rs, int nocc, int n, const Eigen::VectorXd& evals) {
+  double mp2e = 0.0;
 
-    for (int i = 0; i < no_occ; ++i) {
-        for (int j = 0; j < no_occ; ++j) {
-            for (int a = no_occ; a < nao; ++a) {
-                for (int b = no_occ; b < nao; ++b) {
-                    double int_ijab = mo_2e_int(coeff_mat, ao_ints, i, a, j, b);
-                    double int_ijba = mo_2e_int(coeff_mat, ao_ints, i, b, j, a);
-                    mp2e += (int_ijab * (2 * int_ijab - int_ijba)) / (evals(i) + evals(j) - evals(a) - evals(b));
-                }
-            }
-        }
-    }
-    return mp2e;
-}
-double mp2_energy(Matrix& coeff_mat, btas::Tensor<double>& ao_ints, int no_occ, int nao, Eigen::VectorXd& evals) {
-    double mp2e = 0.0;
+  auto ia_jb = transform_pqrs_to_iajb(C, pq_rs, nocc);
 
-    for (int i = 0; i < no_occ; ++i) {
-        for (int j = 0; j < no_occ; ++j) {
-            for (int a = no_occ; a < nao; ++a) {
-                for (int b = no_occ; b < nao; ++b) {
-                    double int_ijab = mo_2e_int(coeff_mat, ao_ints, i, a, j, b, no_occ);
-                    double int_ijba = mo_2e_int(coeff_mat, ao_ints, i, b, j, a, no_occ);
-                    mp2e += (int_ijab * (2 * int_ijab - int_ijba)) / (evals(i) + evals(j) - evals(a) - evals(b));
-                }
-            }
+  const auto nuocc = n - nocc;
+  for (int i = 0; i < nocc; ++i) {
+    for (int j = 0; j < nocc; ++j) {
+      for (int a = 0; a < nuocc; ++a) {
+        for (int b = 0; b < nuocc; ++b) {
+          mp2e += ia_jb(i, a, j, b) *
+                  (2 * ia_jb(i, a, j, b) - ia_jb(i, b, j, a)) /
+                  (evals(i) + evals(j) - evals(nocc+a) - evals(nocc+b));
         }
+      }
     }
-    return mp2e;
+  }
+  return mp2e;
 }
 
 
