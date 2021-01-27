@@ -60,9 +60,9 @@ Matrix compute_2body_fock(const libint2::BasisSet& obs,
 double mp2_energy(Matrix& coeff_mat, std::vector<double>& ao_ints, int no_occ, int nao, Eigen::VectorXd& evals);
 double mp2_energy(Matrix& coeff_mat, btas::Tensor<double>& ao_ints, int no_occ, int nao, Eigen::VectorXd& evals);
 double mo_2e_int(Matrix& coeff_mat, Matrix& two_e_ints, int i, int j, int a, int b/*, int no_occ*/);
-double mo_2e_int(Matrix& coeff_mat, btas::Tensor<double> ao_ints, int i, int j, int a, int b);
-std::vector<double> ao_integrals_vector(libint2::BasisSet& obs);
-btas::Tensor<double> ao_integrals_tensor(libint2::BasisSet& obs);
+double mo_2e_int(Matrix& coeff_mat, btas::Tensor<double> ao_ints, int i, int j, int a, int b, int nocc);
+//std::vector<double> ao_integrals_vector(libint2::BasisSet& obs);
+btas::Tensor<double> rei_ao_integrals_tensor(libint2::BasisSet& obs);
 
 int main(int argc, char *argv[]) {
 
@@ -238,42 +238,44 @@ int main(int argc, char *argv[]) {
     } while (((fabs(ediff) > conv) || (fabs(rmsd) > conv)) && (iter < maxiter));
 
     // ####### Begin MP2 stuff
-    std::vector<double> ao_ints = ao_integrals_vector(obs);
+    //std::vector<double> ao_ints = ao_integrals_vector(obs);
     //std::cout << ao_ints << "\n";
-    std::cout << "Length of ao_ints vector: " << ao_ints.size() << "\n";
-    double total_vector_sum = 0.0;
+
+    //std::cout << "Length of ao_ints vector: " << ao_ints.size() << "\n";
+    //double total_vector_sum = 0.0;
     double total_tensor_sum = 0.0;
-    for (int i = 0; i< ao_ints.size(); ++i) {
+    /*for (int i = 0; i< ao_ints.size(); ++i) {
         if (i % 7 == 0)
             std::cout << "\n";
         total_vector_sum += ao_ints[i];
         printf("%10.6f\t", ao_ints[i]);
     }
     std::cout << std::endl;
-    btas::Tensor<double> ao_ints_ten = ao_integrals_tensor(obs);
-    std::cout << "Integrals tensor: " << "\n";
+    */
+    btas::Tensor<double> ao_ints_ten = rei_ao_integrals_tensor(obs);
+    //std::cout << "Integrals tensor: " << "\n";
     for (int i = 0; i < 7; ++i) {
         for (int j = 0; j < 7; ++j) {
             for (int k = 0; k < 7; ++k) {
                 for (int l = 0; l < 7; ++l) {
-                    printf("%10.6f\t", ao_ints_ten(i,j,k,l));
+                    //printf("%10.6f\t", ao_ints_ten(i,j,k,l));
                     total_tensor_sum += ao_ints_ten(i,j,k,l);
                 }
-                std::cout << "\n";
+                //std::cout << "\n";
             }
             //std::cout << "***\n";
         }
         //std::cout << "$$$\n";
     }
     //std::cout << "\t***** AO Ints Tensor: " << ao_ints_ten << std::endl;
-    auto mp2_e = mp2_energy(C, ao_ints, ndocc, nao, C_v);
+    //auto mp2_e = mp2_energy(C, ao_ints, ndocc, nao, C_v);
     auto mp2_e_ten = mp2_energy(C, ao_ints_ten, ndocc, nao, C_v);
 
-    printf("** Vector sum total %20.12f, Tensor sum total %20.12f\n", total_vector_sum, total_tensor_sum);
+    printf("** Vector sum total %20.12f\n", total_tensor_sum);
     printf("** Hartree-Fock energy = %20.12f\n", ehf + enuc);
-    printf("** MP2 energy = %20.12f\n", mp2_e);
+    //printf("** MP2 energy = %20.12f\n", mp2_e);
     printf("** MP2 energy using tensor = %20.12f\n", mp2_e_ten);
-    printf("** Total MP2 energy = %20.12f\n", ehf + enuc + mp2_e);
+    //printf("** Total MP2 energy = %20.12f\n", ehf + enuc + mp2_e);
 
     libint2::finalize(); // done with libint
 
@@ -727,12 +729,59 @@ double mo_2e_int(Matrix& coeff_mat, std::vector<double> ao_ints, int i, int j, i
     }
     return result;
 }
-// Computes a molecular-orbital based four-center integral using a 4d tensor of 2-d ints
-double mo_2e_int(Matrix& coeff_mat, btas::Tensor<double> ao_ints, int i, int j, int a, int b) {
+// Computes a molecular-orbital based four-center integral using a 4d tensor of 2-e ints
+double mo_2e_int(Matrix& coeff_mat, btas::Tensor<double> ao_ints, int i, int j, int a, int b, int nocc) {
     using std::pow;
 
     //int nbasis_fn = sqrt(sqrt(ao_ints.size()));
-    size_t nbasis_fn = ao_ints.extent(0);
+    int nbasis_fn = ao_ints.extent(0);
+    int nuocc = nbasis_fn - nocc;
+
+    printf("nocc= %2i,  nbasis_fn= %2i,  nuocc= %2i\n", nocc, nbasis_fn, nuocc);
+    std::cout << "Coeff matrix dimensions: " << coeff_mat.size() << "\n";
+
+    btas::Tensor<double> g_uv_ps(nbasis_fn, nbasis_fn, nbasis_fn, nbasis_fn); g_uv_ps.fill(0);
+
+    btas::Tensor<double> C_ao_occ(nbasis_fn, nocc);
+    std::cout << "C occ size: " << C_ao_occ.extent(0) << "," << C_ao_occ.extent(1) << "\n";
+    for (int i = 0; i < nocc; ++i) {
+        for (int j = 0; j < nbasis_fn; ++j) {
+            //std::cout <<
+            C_ao_occ(i, j) = coeff_mat(i, j);
+        }
+    }
+    //C_ao_occ = coeff_mat.leftCols(nocc);
+    btas::Tensor<double> C_ao_unocc(nbasis_fn, nuocc);
+    std::cout << "C unocc size: " << C_ao_unocc.extent(0) << "," << C_ao_unocc.extent(1) << "\n";
+    for (int i = nocc; i < nbasis_fn; ++i) {
+        for (int j = 0; j < nbasis_fn; ++j) {
+            C_ao_unocc(i, j) = coeff_mat(i, j);
+        }
+    }
+    printf("Size of ao_ints 4th order tensor: %4li\n", ao_ints.size());
+    printf("Dimensions of ao_ints: %4li, %4li, %4li, %4li\n", ao_ints.extent(0), ao_ints.extent(1), ao_ints.extent(2), ao_ints.extent(3));
+    printf("Dimensions of C_ao_occ: %4li, %4li\n", C_ao_occ.extent(0), C_ao_occ.extent(1));
+    std::cout << "Initialized overlap tensors successfully\n";
+    //C_ao_unocc = coeff_mat.rightCols(nuocc);
+
+    btas::Tensor<double> g_iv_ps; //(nbasis_fn, nbasis_fn, nbasis_fn)
+    std::cout << "Created tensor to accept contraction result\n";
+    btas::contract(1.0, g_uv_ps, {1, 2, 3, 4}, C_ao_occ, {1, 5}, 0.0, g_iv_ps, {5, 2, 3, 4});
+    //btas::contract(1.0, ao_ints, {1, 2, 3, 4}, C_ao_occ, {1, 5}, 0.0, g_iv_ps, {5, 2, 3, 4});
+    std::cout << "First contraction successful\n";
+    btas::Tensor<double> g_iv_js;
+    //btas::contract(1.0, g_iv_ps, {1, 2, 3, 4}, C_ao_occ, {3, 5}, 0.0, g_iv_js, {1, 2, 5, 4}); // last item should be {1,2,5,4}? was written {3,2,5,4}
+    btas::contract(1.0, ao_ints, {1, 2, 3, 4}, C_ao_occ, {3, 5}, 0.0, g_iv_js, {1, 2, 5, 4});
+    std::cout << "Second contraction successful\n";
+
+    btas::Tensor<double> g_iv_jb;
+    //btas::contract(1.0, g_iv_js, {1, 2, 3, 4}, C_ao_unocc, {3, 5}, 0.0, g_iv_jb, {1, 2, 5, 4});
+    btas::contract(1.0, ao_ints, {1, 2, 3, 4}, C_ao_unocc, {3, 5}, 0.0, g_iv_jb, {1, 2, 5, 4});
+    std::cout << "Third contraction successful\n";
+    btas::Tensor<double> g_ia_jb;
+    //btas::contract(1.0, g_iv_jb, {1, 2, 3, 4}, C_ao_unocc, {1, 5}, 0.0, g_ia_jb, {5, 2, 3, 4});
+    btas::contract(1.0, ao_ints, {1, 2, 3, 4}, C_ao_unocc, {1, 5}, 0.0, g_ia_jb, {5, 2, 3, 4});
+    std::cout << "Fourth contraction successful\n";
 
     double result = 0.0;
     auto ao_integral = 0.0;
@@ -775,8 +824,8 @@ double mp2_energy(Matrix& coeff_mat, btas::Tensor<double>& ao_ints, int no_occ, 
         for (int j = 0; j < no_occ; ++j) {
             for (int a = no_occ; a < nao; ++a) {
                 for (int b = no_occ; b < nao; ++b) {
-                    double int_ijab = mo_2e_int(coeff_mat, ao_ints, i, a, j, b);
-                    double int_ijba = mo_2e_int(coeff_mat, ao_ints, i, b, j, a);
+                    double int_ijab = mo_2e_int(coeff_mat, ao_ints, i, a, j, b, no_occ);
+                    double int_ijba = mo_2e_int(coeff_mat, ao_ints, i, b, j, a, no_occ);
                     mp2e += (int_ijab * (2 * int_ijab - int_ijba)) / (evals(i) + evals(j) - evals(a) - evals(b));
                 }
             }
@@ -785,9 +834,10 @@ double mp2_energy(Matrix& coeff_mat, btas::Tensor<double>& ao_ints, int no_occ, 
     return mp2e;
 }
 
+
 // Computes atomic orbital four-center repulsion integrals, stored as vector
-std::vector<double> ao_integrals_vector(libint2::BasisSet& obs)
-{
+/*
+std::vector<double> ao_integrals_vector(libint2::BasisSet& obs) {
     using libint2::Shell;
     using libint2::Engine;
     using libint2::Operator;
@@ -802,35 +852,35 @@ std::vector<double> ao_integrals_vector(libint2::BasisSet& obs)
     auto shell2bf = obs.shell2bf();
 
     // buf[0] points to the target shell set after every call  to engine.compute()
-    const auto& buf = engine.results();
+    const auto &buf = engine.results();
 
     // loop over shell pairs of the Fock matrix, {s1,s2}
     // Fock matrix is symmetric, but skipping it here for simplicity (see compute_2body_fock)
-    for(auto s1=0; s1!=obs.size(); ++s1) {
+    for (auto s1 = 0; s1 != obs.size(); ++s1) {
 
         auto bf1_first = shell2bf[s1]; // first basis function in this shell
         auto n1 = obs[s1].size();
 
-        for(auto s2=0; s2!=obs.size(); ++s2) {
+        for (auto s2 = 0; s2 != obs.size(); ++s2) {
 
             auto bf2_first = shell2bf[s2];
             auto n2 = obs[s2].size();
 
             // loop over shell pairs of the density matrix, {s3,s4}
             // again symmetry is not used for simplicity
-            for(auto s3=0; s3!=obs.size(); ++s3) {
+            for (auto s3 = 0; s3 != obs.size(); ++s3) {
 
                 auto bf3_first = shell2bf[s3];
                 auto n3 = obs[s3].size();
 
-                for(auto s4=0; s4!= obs.size(); ++s4) {
+                for (auto s4 = 0; s4 != obs.size(); ++s4) {
 
                     auto bf4_first = shell2bf[s4];
                     auto n4 = obs[s4].size();
 
                     // Coulomb contribution to the Fock matrix is from {s1,s2,s3,s4} integrals
                     engine.compute(obs[s1], obs[s2], obs[s3], obs[s4]);
-                    const auto* buf_1234 = buf[0];
+                    const auto *buf_1234 = buf[0];
                     if (buf_1234 == nullptr)
                         continue; // if all integrals screened out, skip to next quartet
 
@@ -838,15 +888,15 @@ std::vector<double> ao_integrals_vector(libint2::BasisSet& obs)
                     // hence some manual labor here:
                     // 1) loop over every integral in the shell set (= nested loops over basis functions in each shell)
                     // and 2) add contribution from each integral
-                    for(auto f1=0, f1234=0; f1!=n1; ++f1) {
+                    for (auto f1 = 0, f1234 = 0; f1 != n1; ++f1) {
                         const auto bf1 = f1 + bf1_first;
-                        for(auto f2=0; f2!=n2; ++f2) {
+                        for (auto f2 = 0; f2 != n2; ++f2) {
                             const auto bf2 = f2 + bf2_first;
-                            for(auto f3=0; f3!=n3; ++f3) {
+                            for (auto f3 = 0; f3 != n3; ++f3) {
                                 const auto bf3 = f3 + bf3_first;
-                                for(auto f4=0; f4!=n4; ++f4, ++f1234) {
+                                for (auto f4 = 0; f4 != n4; ++f4, ++f1234) {
                                     const auto bf4 = f4 + bf4_first;
-                                    eri_ao.push_back( buf_1234[f1234] );
+                                    eri_ao.push_back(buf_1234[f1234]);
                                 }
                             }
                         }
@@ -857,19 +907,16 @@ std::vector<double> ao_integrals_vector(libint2::BasisSet& obs)
     }
 
     return eri_ao;
-}
+}*/
 
-//typedef btas::RangeNd<CblasRowMajor, std::array<long, 4>> Range4d;
-//typedef btas::Tensor<double, Range4d> Tensor4d;
-
-btas::Tensor<double> ao_integrals_tensor(libint2::BasisSet& obs)
+btas::Tensor<double> rei_ao_integrals_tensor(libint2::BasisSet& obs)
 {
     using libint2::Shell;
     using libint2::Engine;
     using libint2::Operator;
 
     size_t n = nbasis(obs);
-    btas::Tensor<double> ao_ints(n, n, n, n);
+    btas::Tensor<double> rei_ao_ints(n, n, n, n);
 
     libint2::initialize();
 
@@ -924,7 +971,7 @@ btas::Tensor<double> ao_integrals_tensor(libint2::BasisSet& obs)
                                 for(auto f4=0; f4!=n4; ++f4, ++f1234) {
                                     const auto bf4 = f4 + bf4_first;
                                     //ao_ints.push_back( buf_1234[f1234] );
-                                    ao_ints(s1, s2, s3, s4) = buf_1234[f1234];
+                                    rei_ao_ints(bf1, bf2, bf3, bf4) = buf_1234[f1234];
                                 }
                             }
                         }
@@ -934,5 +981,5 @@ btas::Tensor<double> ao_integrals_tensor(libint2::BasisSet& obs)
         }
     }
 
-    return ao_ints;
+    return rei_ao_ints;
 }
