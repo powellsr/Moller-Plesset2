@@ -709,6 +709,69 @@ btas::Tensor<double>
         }
     }
 
+    /* // Contractions via loop
+    btas::Tensor<double> iq_rs_copy(nocc, n, n, n);
+    iq_rs_copy.fill(0);
+    double temp;
+    for (int i = 0; i != nocc; ++i) {
+        for (int q = 0; q != n; ++q) {
+            for (int r = 0; r != n; ++r) {
+                for (int s = 0; s != n; ++s) {
+                    temp = 0.0;
+                    for (int p = 0; p != n; ++p) {
+                        temp += 1.0 * pq_rs(p,q,r,s) * C_occ(p,i); // + 0.0 * iq_rs(i,q,r,s)
+                    }
+                    iq_rs_copy(i,q,r,s) = temp;
+                }
+            }
+        }
+    }
+    btas::Tensor<double> iq_js_copy(nocc, n, nocc, n);
+    iq_js_copy.fill(0);
+    for (int i = 0; i != nocc; ++i) {
+        for (int q = 0; q != n; ++q) {
+            for (int j = 0; j != nocc; ++j) {
+                for (int s = 0; s != n; ++s) {
+                    temp = 0.0;
+                    for (int r = 0; r != n; ++r) {
+                        temp += 1.0 * iq_rs_copy(i,q,r,s) * C_occ(r,j);
+                    }
+                    iq_js_copy(i,q,j,s) = temp;
+                }
+            }
+        }
+    }
+    btas::Tensor<double> iq_jb_copy(nocc, n, nocc, nuocc);
+    iq_jb_copy.fill(0);
+    for (int i = 0; i != nocc; ++i) {
+        for (int q = 0; q != n; ++q) {
+            for (int j = 0; j != nocc; ++j) {
+                for (int b = 0; b != nuocc; ++b) {
+                    temp = 0.0;
+                    for (int s = 0; s != n; ++s) {
+                        temp += 1.0 * iq_js_copy(i,q,j,s) * C_uocc(s,b);
+                    }
+                    iq_jb_copy(i,q,j,b) = temp;
+                }
+            }
+        }
+    }
+    btas::Tensor<double> ia_jb_copy(nocc, nuocc, nocc, nuocc);
+    ia_jb_copy.fill(0);
+    for (int i = 0; i != nocc; ++i) {
+        for (int a = 0; a != nuocc; ++a) {
+            for (int j = 0; j != nocc; ++j) {
+                for (int b = 0; b != nuocc; ++b) {
+                    temp = 0.0;
+                    for (int q = 0; q != n; ++q) {
+                        temp += 1.0 * iq_jb_copy(i,q,j,b) * C_uocc(q,a);
+                    }
+                    iq_jb_copy(i,a,j,b) = temp;
+                }
+            }
+        }
+    }*/
+
     btas::Tensor<double> iq_rs;  // (iq|rs)
     // iq_rs(i,q,r,s) = 1.0 * \sum_p pq_rs(p,q,r,s) * C_occ(p,i) + 0.0 * iq_rs(i,q,r,s)
     btas::contract(1.0, pq_rs, {1, 2, 3, 4}, C_occ, {1, 5}, 0.0, iq_rs, {5, 2, 3, 4});
@@ -718,6 +781,52 @@ btas::Tensor<double>
     btas::contract(1.0, iq_js, {1, 2, 3, 4}, C_uocc, {4, 5}, 0.0, iq_jb, {1, 2, 3, 5});
     btas::Tensor<double> ia_jb;
     btas::contract(1.0, iq_jb, {1, 2, 3, 4}, C_uocc, {2, 5}, 0.0, ia_jb, {1, 5, 3, 4});
+
+/*  // Comparison of loop and btas::contract contractions
+    for (int i = 0; i != nocc; ++i) {
+        for (int q = 0; q != n; ++q) {
+            for (int r = 0; r != n; ++r) {
+                for (int s = 0; s != n; ++s) {
+                    if (std::abs(iq_rs(i,q,r,s) - iq_rs_copy(i,q,r,s)) > (1e-15))
+                        std::cout << iq_rs(i,q,r,s) - iq_rs_copy(i,q,r,s) << std::endl;
+                }
+            }
+        }
+    }
+    std::cout << "evaluate second contraction: \n";
+    for (int i = 0; i != nocc; ++i) {
+        for (int q = 0; q != n; ++q) {
+            for (int j = 0; j != nocc; ++j) {
+                for (int s = 0; s != n; ++s) {
+                    if (std::abs(iq_js(i,q,j,s) - iq_js_copy(i,q,j,s)) > (1e-15))
+                        std::cout << iq_js(i,q,j,s) - iq_js_copy(i,q,j,s) << std::endl;
+                }
+            }
+        }
+    }
+    std::cout << "evaluate third contraction: \n";
+    for (int i = 0; i != nocc; ++i) {
+        for (int q = 0; q != n; ++q) {
+            for (int j = 0; j != nocc; ++j) {
+                for (int b = 0; b != nuocc; ++b) {
+                    if (std::abs(iq_jb(i,q,j,b) - iq_jb_copy(i,q,j,b)) > (1e-15))
+                        std::cout << iq_jb(i,q,j,b) - iq_jb_copy(i,q,j,b) << std::endl;
+                }
+            }
+        }
+    }
+    std::cout << "evaluate fourth contraction: \n";
+    for (int i = 0; i != nocc; ++i) {
+        for (int a = 0; a != nuocc; ++a) {
+            for (int j = 0; j != nocc; ++j) {
+                for (int b = 0; b != nuocc; ++b) {
+                    if (std::abs(ia_jb(i,a,j,b) - ia_jb_copy(i,a,j,b)) > (1e-15))
+                        std::cout << ia_jb(i,a,j,b) - ia_jb_copy(i,a,j,b) << std::endl;
+                }
+            }
+        }
+    }
+    */
 
     return ia_jb;
 }
@@ -741,81 +850,6 @@ double mp2_energy(const Matrix& C, const btas::Tensor<double>& pq_rs, int nocc, 
   }
   return mp2e;
 }
-
-
-// Computes atomic orbital four-center repulsion integrals, stored as vector
-/*
-std::vector<double> ao_integrals_vector(libint2::BasisSet& obs) {
-    using libint2::Shell;
-    using libint2::Engine;
-    using libint2::Operator;
-
-    std::vector<double> eri_ao;
-
-    libint2::initialize();
-
-    // construct the electron repulsion integrals engine
-    Engine engine(Operator::coulomb, max_nprim(obs), max_nprim(obs), 0);
-
-    auto shell2bf = obs.shell2bf();
-
-    // buf[0] points to the target shell set after every call  to engine.compute()
-    const auto &buf = engine.results();
-
-    // loop over shell pairs of the Fock matrix, {s1,s2}
-    // Fock matrix is symmetric, but skipping it here for simplicity (see compute_2body_fock)
-    for (auto s1 = 0; s1 != obs.size(); ++s1) {
-
-        auto bf1_first = shell2bf[s1]; // first basis function in this shell
-        auto n1 = obs[s1].size();
-
-        for (auto s2 = 0; s2 != obs.size(); ++s2) {
-
-            auto bf2_first = shell2bf[s2];
-            auto n2 = obs[s2].size();
-
-            // loop over shell pairs of the density matrix, {s3,s4}
-            // again symmetry is not used for simplicity
-            for (auto s3 = 0; s3 != obs.size(); ++s3) {
-
-                auto bf3_first = shell2bf[s3];
-                auto n3 = obs[s3].size();
-
-                for (auto s4 = 0; s4 != obs.size(); ++s4) {
-
-                    auto bf4_first = shell2bf[s4];
-                    auto n4 = obs[s4].size();
-
-                    // Coulomb contribution to the Fock matrix is from {s1,s2,s3,s4} integrals
-                    engine.compute(obs[s1], obs[s2], obs[s3], obs[s4]);
-                    const auto *buf_1234 = buf[0];
-                    if (buf_1234 == nullptr)
-                        continue; // if all integrals screened out, skip to next quartet
-
-                    // we don't have an analog of Eigen for tensors (yet ... see github.com/BTAS/BTAS, under development)
-                    // hence some manual labor here:
-                    // 1) loop over every integral in the shell set (= nested loops over basis functions in each shell)
-                    // and 2) add contribution from each integral
-                    for (auto f1 = 0, f1234 = 0; f1 != n1; ++f1) {
-                        const auto bf1 = f1 + bf1_first;
-                        for (auto f2 = 0; f2 != n2; ++f2) {
-                            const auto bf2 = f2 + bf2_first;
-                            for (auto f3 = 0; f3 != n3; ++f3) {
-                                const auto bf3 = f3 + bf3_first;
-                                for (auto f4 = 0; f4 != n4; ++f4, ++f1234) {
-                                    const auto bf4 = f4 + bf4_first;
-                                    eri_ao.push_back(buf_1234[f1234]);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    return eri_ao;
-}*/
 
 btas::Tensor<double> rei_ao_integrals_tensor(libint2::BasisSet& obs)
 {
